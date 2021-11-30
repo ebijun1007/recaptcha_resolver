@@ -26,6 +26,7 @@ class recaptchaResolver():
             '--user-agent=' + user_agent[random.randrange(0, len(user_agent), 1)])
         self.driver = webdriver.Chrome(options=chrome_options)
         self.retry = 0
+        self.max_retry = 3
 
     def click_recaptcha_checkbox(self):
         self.driver.switch_to.default_content()
@@ -49,46 +50,53 @@ class recaptchaResolver():
             raise
         return result
 
+    def select_audio(self):
+        self.driver.switch_to.default_content()
+        frames = self.driver.find_elements_by_tag_name("iframe")
+        self.driver.switch_to.frame(frames[-1])
+        self.driver.find_element_by_id("recaptcha-audio-button").click()
+        self.driver.switch_to.default_content()
+
+    def answer_audio(self):
+        path = os.path.abspath(os.getcwd())
+        frames = self.driver.find_elements_by_tag_name("iframe")
+        self.driver.switch_to.frame(frames[-1])
+        sleep(randint(2, 4))
+
+        self.driver.find_element_by_xpath(
+            "/html/body/div/div/div[3]/div/button").click()
+        src = self.driver.find_element_by_id(
+            "audio-source").get_attribute("src")
+        urllib.request.urlretrieve(src, path+"/audio.mp3")
+        pydub.AudioSegment.from_mp3(
+            path+"/audio.mp3").export(path+"/audio.wav", format="wav")
+        recognizer = Recognizer()
+        recaptcha_audio = AudioFile(path+"/audio.wav")
+
+        with recaptcha_audio as source:
+            audio = recognizer.record(source)
+
+        text = recognizer.recognize_google(audio, language="de-DE")
+
+        inputfield = self.driver.find_element_by_id("audio-response")
+        inputfield.send_keys(text.lower())
+        inputfield.send_keys(Keys.ENTER)
+        sleep(10)
+
     def resolve_recaptcha(self):
         try:
-            path = os.path.abspath(os.getcwd())
+            self.select_audio()
+            self.answer_audio()
 
-            self.driver.switch_to.default_content()
-            frames = self.driver.find_elements_by_tag_name("iframe")
-            self.driver.switch_to.frame(frames[-1])
-            self.driver.find_element_by_id("recaptcha-audio-button").click()
-            self.driver.switch_to.default_content()
-            frames = self.driver.find_elements_by_tag_name("iframe")
-            self.driver.switch_to.frame(frames[-1])
-            sleep(randint(2, 4))
-
-            self.driver.find_element_by_xpath(
-                "/html/body/div/div/div[3]/div/button").click()
-            src = self.driver.find_element_by_id(
-                "audio-source").get_attribute("src")
-            urllib.request.urlretrieve(src, path+"/audio.mp3")
-            pydub.AudioSegment.from_mp3(
-                path+"/audio.mp3").export(path+"/audio.wav", format="wav")
-            recognizer = Recognizer()
-            recaptcha_audio = AudioFile(path+"/audio.wav")
-
-            with recaptcha_audio as source:
-                audio = recognizer.record(source)
-
-            text = recognizer.recognize_google(audio, language="de-DE")
-
-            inputfield = self.driver.find_element_by_id("audio-response")
-            inputfield.send_keys(text.lower())
-            inputfield.send_keys(Keys.ENTER)
-            sleep(10)
-
-            if not self.solved_recaptcha():
+            while not self.solved_recaptcha():
                 self.retry += 1
-                if self.retry > 3:
+                print(f"retry: {self.retry}")
+                if self.retry > self.max_retry:
                     raise
-                self.resolve_recaptcha()
+                self.answer_audio()
             print("Success")
             self.driver.save_screenshot("ss_success.png")
+            return
 
         except UnknownValueError:
             self.retry += 1
@@ -105,4 +113,8 @@ if __name__ == "__main__":
     recaptcha_resolver.driver.get(url)
     recaptcha_resolver.click_recaptcha_checkbox()
     recaptcha_resolver.resolve_recaptcha()
+    recaptcha_resolver.driver.switch_to.default_content()
+    recaptcha_resolver.driver.find_element_by_id("input1").submit()
+    sleep(10)
+    recaptcha_resolver.driver.save_screenshot("submitted.png")
     recaptcha_resolver.driver.quit()
